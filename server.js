@@ -14,6 +14,7 @@ const MAX_HISTORY = 300;
 const MAX_TEXT = 1000;
 const MAX_IMAGE_CHARS = 950000;
 const IMAGE_RE = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+\/=]+$/;
+const GIF_RE = /^https:\/\/(media\d*|i)\.giphy\.com\/[A-Za-z0-9_\-.\/]+(\?[A-Za-z0-9_=&%.\-]*)?$/;
 
 let history = [];
 
@@ -28,6 +29,11 @@ function cleanImage(value) {
   return IMAGE_RE.test(value) ? value : null;
 }
 
+function cleanGif(value) {
+  if (typeof value !== 'string' || value.length > 600) return null;
+  return GIF_RE.test(value) ? value : null;
+}
+
 io.on('connection', (socket) => {
   socket.emit('loadHistory', history);
 
@@ -35,7 +41,8 @@ io.on('connection', (socket) => {
     if (!data || !ALLOWED_USERS.includes(data.user)) return;
     const text = cleanText(data.text);
     const image = cleanImage(data.image);
-    if (!text && !image) return;
+    const gif = image ? null : cleanGif(data.gif);
+    if (!text && !image && !gif) return;
 
     const msg = {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
@@ -45,6 +52,7 @@ io.on('connection', (socket) => {
       edited: false
     };
     if (image) msg.image = image;
+    if (gif) msg.gif = gif;
 
     history.push(msg);
     if (history.length > MAX_HISTORY) history = history.slice(-MAX_HISTORY);
@@ -57,7 +65,7 @@ io.on('connection', (socket) => {
 
     const msg = history.find((m) => m.id === data.id);
     if (!msg || msg.user !== data.user) return;
-    if (!text && !msg.image) return;
+    if (!text && !msg.image && !msg.gif) return;
 
     msg.text = text;
     msg.edited = true;
