@@ -168,21 +168,42 @@
 
   /* Composer */
   .composer {
+    position: relative;
     display: flex;
     gap: 8px;
     padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
     border-top: 1px solid var(--border);
   }
   #attach {
-    padding: 0 14px;
+    width: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     border-radius: 12px;
     border: 1px solid var(--border);
     background: var(--surface);
     color: var(--muted);
-    font-weight: 600;
     transition: color .15s, border-color .15s;
   }
-  #attach:hover { color: var(--text); border-color: var(--own); }
+  #attach:hover, #attach.open { color: var(--text); border-color: var(--own); }
+  .attach-menu {
+    position: absolute;
+    left: 12px;
+    bottom: calc(100% + 8px);
+    display: none;
+    flex-direction: column;
+    min-width: 140px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    z-index: 12;
+    box-shadow: 0 10px 30px rgba(0,0,0,.5);
+  }
+  .attach-menu.active { display: flex; }
+  .attach-menu button { padding: 13px 18px; text-align: left; font-size: .92rem; }
+  .attach-menu button + button { border-top: 1px solid var(--border); }
+  .attach-menu button:hover { background: var(--surface); }
   #message {
     flex: 1;
     min-width: 0;
@@ -205,6 +226,60 @@
   }
   #send:active { transform: scale(.97); }
   #send:disabled { opacity: .4; cursor: not-allowed; }
+
+  /* GIF panel */
+  #gifPanel {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 62%;
+    z-index: 15;
+    display: none;
+    flex-direction: column;
+    background: var(--bg);
+    border-top: 1px solid var(--border);
+    border-radius: 18px 18px 0 0;
+    box-shadow: 0 -10px 30px rgba(0,0,0,.5);
+  }
+  #gifPanel.active { display: flex; }
+  .gif-head { display: flex; gap: 8px; padding: 12px; }
+  #gifSearch {
+    flex: 1;
+    min-width: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px 14px;
+    outline: none;
+  }
+  #gifSearch::placeholder { color: var(--muted); }
+  #gifSearch:focus { border-color: var(--own); }
+  #gifGrid {
+    flex: 1;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    padding: 0 12px 12px;
+    column-count: 2;
+    column-gap: 6px;
+  }
+  .gif-item {
+    display: block;
+    width: 100%;
+    margin-bottom: 6px;
+    break-inside: avoid;
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--surface);
+  }
+  .gif-item img { display: block; width: 100%; height: auto; }
+  .gif-info { column-span: all; text-align: center; color: var(--muted); font-size: .88rem; padding: 24px 12px; }
+  .gif-foot {
+    text-align: center;
+    font-size: .7rem;
+    color: var(--muted);
+    padding: 6px 0 calc(8px + env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid var(--border);
+  }
 
   /* Login */
   #login {
@@ -289,19 +364,41 @@
     </div>
 
     <div class="composer">
-      <button id="attach" type="button">Foto</button>
+      <div class="attach-menu" id="attachMenu">
+        <button type="button" id="menuPhoto">Foto</button>
+        <button type="button" id="menuGif">GIF</button>
+      </div>
+      <button id="attach" type="button" aria-label="Anhang">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 16V4"/>
+          <path d="M7 9l5-5 5 5"/>
+          <path d="M5 20h14"/>
+        </svg>
+      </button>
       <input id="fileInput" type="file" accept="image/*" hidden>
       <input id="message" type="text" placeholder="Nachricht" maxlength="1000" autocomplete="off" autocorrect="on" enterkeyhint="send">
       <button id="send" disabled>Senden</button>
+    </div>
+
+    <div id="gifPanel">
+      <div class="gif-head">
+        <input id="gifSearch" type="search" placeholder="GIFs suchen" autocomplete="off" enterkeyhint="search">
+        <button class="btn-ghost" id="gifClose">Schließen</button>
+      </div>
+      <div id="gifGrid"></div>
+      <div class="gif-foot">Powered by GIPHY</div>
     </div>
   </div>
 
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
   <script>
     const SERVER_URL = 'https://chatbox-rfdm.onrender.com';
+    const GIPHY_API_KEY = 'DEIN_GIPHY_API_KEY';
+
     const COLORS = { Maxi: '#f0a35e', Jonas: '#58c4a0', Ben: '#8aa4ff' };
     const MAX_IMAGE_CHARS = 950000;
     const IMAGE_RE = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+\/=]+$/;
+    const GIF_RE = /^https:\/\/(media\d*|i)\.giphy\.com\/[A-Za-z0-9_\-.\/]+(\?[A-Za-z0-9_=&%.\-]*)?$/;
 
     const $app = document.getElementById('app');
     const $login = document.getElementById('login');
@@ -317,6 +414,11 @@
     const $fileInput = document.getElementById('fileInput');
     const $lightbox = document.getElementById('lightbox');
     const $lightImg = document.getElementById('lightImg');
+    const $attach = document.getElementById('attach');
+    const $attachMenu = document.getElementById('attachMenu');
+    const $gifPanel = document.getElementById('gifPanel');
+    const $gifSearch = document.getElementById('gifSearch');
+    const $gifGrid = document.getElementById('gifGrid');
 
     let me = null;
     let messages = [];
@@ -337,6 +439,10 @@
 
     function safeImage(src) {
       return typeof src === 'string' && src.length <= MAX_IMAGE_CHARS + 100 && IMAGE_RE.test(src) ? src : null;
+    }
+
+    function safeGif(src) {
+      return typeof src === 'string' && src.length <= 600 && GIF_RE.test(src) ? src : null;
     }
 
     /* ---------- Storage ---------- */
@@ -387,12 +493,12 @@
 
       const color = COLORS[m.user] || '#aaaaaa';
       const canEdit = own && m.id !== undefined && m.id !== null;
-      const img = safeImage(m.image);
+      const media = safeImage(m.image) || safeGif(m.gif);
 
       row.innerHTML =
-        '<div class="bubble' + (img ? ' has-photo' : '') + '">' +
+        '<div class="bubble' + (media ? ' has-photo' : '') + '">' +
           (own ? '' : '<div class="name" style="color:' + color + '">' + escapeHtml(m.user) + '</div>') +
-          (img ? '<img class="photo" alt="Foto" src="' + escapeHtml(img) + '">' : '') +
+          (media ? '<img class="photo" alt="" src="' + escapeHtml(media) + '">' : '') +
           (m.text ? '<div class="text">' + escapeHtml(m.text) + '</div>' : '') +
           '<div class="foot">' +
             (canEdit ? '<button class="edit-btn" data-action="edit">Bearbeiten</button>' : '') +
@@ -433,6 +539,7 @@
       $login.classList.add('hidden');
       cancelEdit();
       clearPhoto();
+      closeGifPanel();
       renderAll();
     }
 
@@ -445,6 +552,7 @@
       store('del', 'chat_user');
       cancelEdit();
       clearPhoto();
+      closeGifPanel();
       $login.classList.remove('hidden');
     });
 
@@ -499,6 +607,34 @@
       renderAll();
     });
 
+    /* ---------- Anhang-Menue ---------- */
+    function closeMenu() {
+      $attachMenu.classList.remove('active');
+      $attach.classList.remove('open');
+    }
+
+    $attach.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!me) return;
+      const open = $attachMenu.classList.toggle('active');
+      $attach.classList.toggle('open', open);
+    });
+    document.addEventListener('click', closeMenu);
+
+    document.getElementById('menuPhoto').addEventListener('click', () => {
+      closeMenu();
+      if (!me) return;
+      if (editing) cancelEdit();
+      $fileInput.click();
+    });
+
+    document.getElementById('menuGif').addEventListener('click', () => {
+      closeMenu();
+      if (!me) return;
+      if (editing) cancelEdit();
+      openGifPanel();
+    });
+
     /* ---------- Fotos ---------- */
     function loadAndScale(file, maxSide, quality) {
       return new Promise((resolve, reject) => {
@@ -542,12 +678,6 @@
       $fileInput.value = '';
     }
 
-    document.getElementById('attach').addEventListener('click', () => {
-      if (!me) return;
-      if (editing) cancelEdit();
-      $fileInput.click();
-    });
-
     $fileInput.addEventListener('change', async () => {
       const file = $fileInput.files && $fileInput.files[0];
       if (!file) return;
@@ -562,7 +692,107 @@
 
     document.getElementById('photoCancel').addEventListener('click', clearPhoto);
 
-    /* Lightbox */
+    /* ---------- GIFs (GIPHY) ---------- */
+    let gifTimer = null;
+    let gifReq = 0;
+
+    function openGifPanel() {
+      $gifPanel.classList.add('active');
+      $gifSearch.value = '';
+      loadGifs('');
+    }
+
+    function closeGifPanel() {
+      $gifPanel.classList.remove('active');
+      $gifSearch.blur();
+    }
+
+    function gifInfo(text) {
+      $gifGrid.innerHTML = '';
+      const d = document.createElement('div');
+      d.className = 'gif-info';
+      d.textContent = text;
+      $gifGrid.appendChild(d);
+    }
+
+    async function loadGifs(query) {
+      if (!GIPHY_API_KEY || GIPHY_API_KEY === 'DEIN_GIPHY_API_KEY') {
+        gifInfo('GIPHY API-Key fehlt. Trage ihn oben im Script bei GIPHY_API_KEY ein.');
+        return;
+      }
+      const id = ++gifReq;
+      gifInfo('Lade');
+      const params = new URLSearchParams({ api_key: GIPHY_API_KEY, limit: '30', rating: 'pg-13' });
+      if (query) { params.set('q', query); params.set('lang', 'de'); }
+      const url = 'https://api.giphy.com/v1/gifs/' + (query ? 'search' : 'trending') + '?' + params.toString();
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const json = await res.json();
+        if (id !== gifReq) return;
+        renderGifs(Array.isArray(json.data) ? json.data : []);
+      } catch (e) {
+        if (id === gifReq) gifInfo('GIFs konnten nicht geladen werden.');
+      }
+    }
+
+    function renderGifs(items) {
+      $gifGrid.innerHTML = '';
+      const frag = document.createDocumentFragment();
+      items.forEach(item => {
+        const imgs = item.images || {};
+        const previewUrl = safeGif((imgs.fixed_width_small || imgs.fixed_width || {}).url);
+        const sendUrl = safeGif((imgs.downsized || imgs.fixed_width || {}).url);
+        if (!previewUrl || !sendUrl) return;
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'gif-item';
+        btn.dataset.gif = sendUrl;
+
+        const img = document.createElement('img');
+        img.src = previewUrl;
+        img.alt = '';
+        img.loading = 'lazy';
+        const base = imgs.fixed_width_small || imgs.fixed_width || {};
+        const w = parseInt(base.width, 10);
+        const h = parseInt(base.height, 10);
+        if (w && h) img.style.aspectRatio = w + ' / ' + h;
+
+        btn.appendChild(img);
+        frag.appendChild(btn);
+      });
+      if (!frag.childNodes.length) { gifInfo('Keine GIFs gefunden.'); return; }
+      $gifGrid.appendChild(frag);
+      $gifGrid.scrollTop = 0;
+    }
+
+    $gifSearch.addEventListener('input', () => {
+      clearTimeout(gifTimer);
+      gifTimer = setTimeout(() => loadGifs($gifSearch.value.trim()), 350);
+    });
+
+    $gifSearch.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        clearTimeout(gifTimer);
+        loadGifs($gifSearch.value.trim());
+        $gifSearch.blur();
+      }
+    });
+
+    $gifGrid.addEventListener('click', (e) => {
+      const btn = e.target.closest('.gif-item');
+      if (!btn || !me || !socket.connected) return;
+      const gif = safeGif(btn.dataset.gif);
+      if (!gif) return;
+      socket.emit('chatMessage', { user: me, text: '', gif });
+      closeGifPanel();
+    });
+
+    document.getElementById('gifClose').addEventListener('click', closeGifPanel);
+
+    /* ---------- Lightbox + Bearbeiten-Klick ---------- */
     $messages.addEventListener('click', (e) => {
       const photo = e.target.closest('img.photo');
       if (photo) {
@@ -588,7 +818,7 @@
       clearPhoto();
       editing = m;
       $message.value = m.text || '';
-      $editPreview.textContent = m.text || 'Foto';
+      $editPreview.textContent = m.text || (m.gif ? 'GIF' : 'Foto');
       $editBar.classList.add('active');
       $message.focus();
     }
@@ -605,7 +835,8 @@
       const text = $message.value.trim();
 
       if (editing) {
-        if ((text || editing.image) && text !== (editing.text || '')) {
+        const hasMedia = !!(editing.image || editing.gif);
+        if ((text || hasMedia) && text !== (editing.text || '')) {
           socket.emit('editMessage', { id: editing.id, user: me, text });
         }
         cancelEdit();
@@ -633,6 +864,13 @@
       }
     });
 
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeGifPanel();
+        closeMenu();
+      }
+    });
+
     document.getElementById('editCancel').addEventListener('click', cancelEdit);
 
     /* ---------- Chat leeren ---------- */
@@ -649,7 +887,7 @@
       document.addEventListener(ev, e => e.preventDefault())
     );
     document.addEventListener('touchmove', (e) => {
-      if (e.touches.length > 1 || !e.target.closest('#messages')) e.preventDefault();
+      if (e.touches.length > 1 || !e.target.closest('#messages, #gifGrid')) e.preventDefault();
     }, { passive: false });
     let lastTouch = 0;
     document.addEventListener('touchend', (e) => {
